@@ -1,0 +1,39 @@
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: timescaledb
+    restart: always
+    environment:
+      - POSTGRES_PASSWORD=wisepower2026
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+    networks:
+      - shm_network
+
+  api-ingestor:
+    build: .
+    container_name: api-ingestor
+    restart: always
+    ports:
+      - "8080:8080"
+    environment:
+      - API_SECRET_KEY=b57ce0e0cac515ec6f7af0cf4aef1911ec1f66a270523f2f5335eba73740995f
+      - DB_HOST=timescaledb
+      - DB_NAME=postgres
+      - DB_USER=postgres
+      - POSTGRES_PASSWORD=wisepower2026
+      - B2_ENDPOINT=https://s3.eu-central-003.backblazeb2.com
+      - B2_KEY_ID=00367f06411cf8b0000000002
+      - B2_APP_KEY=K0037NqqmH9vng5hOYI624Mn8vyx8sc
+      - B2_BUCKET_NAME=shm-monitoring
+    depends_on:
+      - timescaledb
+    networks:
+      - shm_network
+
+networks:
+  shm_network:
+    driver: bridge
+
+volumes:
+  timescaledb_data:

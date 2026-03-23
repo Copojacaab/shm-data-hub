@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+psycopg2-binary
+boto3
+celery
+redis
+pandas
+pyarrow
+fastparquet
+pyjwt
+pwdlib[argon2]
