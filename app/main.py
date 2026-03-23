@@ -1,7 +1,7 @@
 import os
 import jwt 
 import psycopg2
-import json
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import List, Annotated
 from psycopg2 import pool
@@ -25,6 +25,7 @@ from io import BytesIO
 # ===========================================
 
 SECRET_KEY = os.getenv("API_SECRET_KEY", "b57ce0e0cac515ec6f7af0cf4aef1911ec1f66a270523f2f5335eba73740995f")
+MASTER_REGISTRATION_TOKEN = os.getenv("MASTER_REGISTRATION_TOKEN", "da_cambiare_in_deploy")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTE = 60
 
@@ -61,6 +62,15 @@ s3_client = boto3.client(
 #       MODELLI DEI DATI (Pydantic)
 # =============================================
 
+# Modello per la prima registrazione (generazione secret)
+class GatewayRegister(BaseModel):
+    client_id: str                      #mac
+    registration_token: str             #master key
+# Modello per la risposta (restituisce la secret generata) forse uso GatewayAuth
+# class GatewayRegisterResponse(BaseModel):
+#     client_id: str
+#     client_secret: str
+# Modello per l'autenticazione (dopo register)
 class GatewayAuth(BaseModel):
     client_id: str
     client_secret: str
@@ -90,6 +100,7 @@ class ShmPayload(BaseModel):
 # ====================================
 #               HELPER
 # ===================================
+
 def _get_timescale_connection():
     return timescale_pool.getconn()
 
@@ -198,6 +209,44 @@ async def verify_gw(token: Annotated[str, Depends(auth2_scheme)]):
 
 app = FastAPI(title="SHM Data Ingestor")
 
+@app.post("/register", response_model=GatewayAuth)
+async def register_new_gateway(reg: GatewayRegister):
+    # 1. Verifica masterkey
+    if reg.registration_token != MASTER_REGISTRATION_TOKEN:
+        raise HTTPException(status_code=403, detail="MasterKey non valida")
+    
+    # 2. Check per evitare doppioni nel db
+    is_registered = get_gateway_from_db(reg.client_id)
+    if is_registered:
+        raise HTTPException(status_code=400, detail="Gateway gia' registrato")
+    
+    # 3. Genero client_secret univoca (mac)
+    new_secret = secrets.token_urlsafe(32)
+    
+    # 4. Hashing per salvataggio in db
+    hashed_secret = password_hash.hash(new_secret)
+    
+    # 5. Inserimento nel db
+    conn = _get_timescale_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO gateways_auth (client_id, secret_hash) VALUES (%s, %s)",
+                (reg.client_id, hashed_secret)
+            )
+            conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Errore database: {str(e)}")
+    finally:
+        _release_timescale_connection(conn)
+    
+    # 6. Risposta al gw
+    return {
+        "client_id": reg.client_id,
+        "client_secret": new_secret
+    }
+
 @app.post("/token", response_model=Token)
 async def generate_gw_token(auth: GatewayAuth):
     gw = get_gateway_from_db(auth.client_id)
@@ -215,9 +264,9 @@ async def generate_gw_token(auth: GatewayAuth):
 def ingest_sensor_data(payload: ShmPayload, background_tasks: BackgroundTasks, gw_id : Annotated[str, Depends(verify_gw)]):
     database_connection = None
     try:
-        database_connection = psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASS, connect_timeout=10)
-        cursor = database_connection.cursor()
-
+        conn = _get_timescale_connection()
+        cursor = conn.cursor()
+        
         sql_device = """
             INSERT INTO devices (mac, project_id, logical_name)
             VALUES (%s, %s, %s)
