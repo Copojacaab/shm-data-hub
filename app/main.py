@@ -25,7 +25,7 @@ from io import BytesIO
 # ===========================================
 
 SECRET_KEY = os.getenv("API_SECRET_KEY", "b57ce0e0cac515ec6f7af0cf4aef1911ec1f66a270523f2f5335eba73740995f")
-MASTER_REGISTRATION_TOKEN = os.getenv("MASTER_REGISTRATION_TOKEN", "da_cambiare_in_deploy")
+MASTER_REGISTRATION_KEY = os.getenv("MASTER_REGISTRATION_KEY", "master_key")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTE = 60
 
@@ -212,7 +212,7 @@ app = FastAPI(title="SHM Data Ingestor")
 @app.post("/register", response_model=GatewayAuth)
 async def register_new_gateway(reg: GatewayRegister):
     # 1. Verifica masterkey
-    if reg.registration_token != MASTER_REGISTRATION_TOKEN:
+    if reg.registration_token != MASTER_REGISTRATION_KEY:
         raise HTTPException(status_code=403, detail="MasterKey non valida")
     
     # 2. Check per evitare doppioni nel db
@@ -262,7 +262,7 @@ async def generate_gw_token(auth: GatewayAuth):
 
 @app.post('/ingest')
 def ingest_sensor_data(payload: ShmPayload, background_tasks: BackgroundTasks, gw_id : Annotated[str, Depends(verify_gw)]):
-    database_connection = None
+    conn = None
     try:
         conn = _get_timescale_connection()
         cursor = conn.cursor()
@@ -292,16 +292,16 @@ def ingest_sensor_data(payload: ShmPayload, background_tasks: BackgroundTasks, g
         """
         cursor.execute(sql_metrics, (payload.timestamp, log_id, payload.metriche.temp, payload.metriche.humidity, payload.metriche.phi, payload.metriche.theta, payload.metriche.rms_asse, payload.metriche.fft_freqs, payload.metriche.fft_mags))
 
-        database_connection.commit()
+        conn.commit()
         print(f"Ricevuti dati autenticati da {gw_id}")
         background_tasks.add_task(process_heavy_data_async, payload.model_dump(mode='json'), log_id, current_project_id)
 
         return {"status": "success", "log_id": log_id, "device_id": device_id, "samples": len(payload.samples)}
     except Exception as e:
-        if database_connection: database_connection.rollback()
+        if conn: conn.rollback()
         raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
     finally:
-        if database_connection: database_connection.close()
+        if conn: conn.close()
 
 @app.exception_handler(RequestValidationError)
 def validation_exception_handler(request, exc):

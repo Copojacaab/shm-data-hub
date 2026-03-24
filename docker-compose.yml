@@ -18,7 +18,7 @@ services:
       - "8080:8080"
     environment:
       - API_SECRET_KEY=b57ce0e0cac515ec6f7af0cf4aef1911ec1f66a270523f2f5335eba73740995f
-      - MASTER_REGISTRATION_KEY=da_cambiare_in_deploy
+      - MASTER_REGISTRATION_KEY=master_key
       - DB_HOST=timescaledb
       - DB_NAME=postgres
       - DB_USER=postgres
