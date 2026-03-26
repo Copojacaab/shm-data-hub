@@ -2,6 +2,7 @@ import os
 import jwt 
 import psycopg2
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from typing import List, Annotated
 from psycopg2 import pool
@@ -44,11 +45,21 @@ B2_BUCKET_NAME = os.getenv("B2_BUCKET_NAME")
 
 DEFAULT_PROJECT_ID = 1
 
-timescale_pool = psycopg2.pool.ThreadedConnectionPool(
-    1, 20,
-    host=DB_HOST, database=DB_NAME,
-    user=DB_USER, password=DB_PASS
-)
+
+# Tentativi di connessione al db
+max_retries = 5
+for i in range(max_retries):
+    try:
+        timescale_pool = psycopg2.pool.ThreadedConnectionPool(
+            1, 20,
+            host=DB_HOST, database=DB_NAME,
+            user=DB_USER, password=DB_PASS
+        )
+    except psycopg2.OperationalError as e:
+        if i == max_retries - 1:
+            raise e
+        print(f"Database non pronto, riprovo tra due secondi... ({i+1}/{max_retries})\n")
+        time.sleep
 
 s3_client = boto3.client(
     's3',
@@ -301,7 +312,8 @@ def ingest_sensor_data(payload: ShmPayload, background_tasks: BackgroundTasks, g
         if conn: conn.rollback()
         raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
     finally:
-        if conn: conn.close()
+        if conn: 
+            _release_timescale_connection(conn)
 
 @app.exception_handler(RequestValidationError)
 def validation_exception_handler(request, exc):
